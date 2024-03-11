@@ -1,3 +1,3 @@
-module github.com/fishmansky/qmess
+module github.com/Fishmansky/qmess
 
 go 1.22.0
