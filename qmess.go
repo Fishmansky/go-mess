@@ -34,15 +34,15 @@ type Queue struct {
 	subscribers []string
 }
 
-type Server struct {
+type Qmess struct {
 	listenAddr  string
 	publishers  []Publisher
 	subscribers []Subscriber
 	queues      []Queue
 }
 
-func NewServer(listenAddr string) *Server {
-	return &Server{
+func NewServer(listenAddr string) *Qmess {
+	return &Qmess{
 		listenAddr:  listenAddr,
 		publishers:  []Publisher{},
 		subscribers: []Subscriber{},
@@ -50,7 +50,7 @@ func NewServer(listenAddr string) *Server {
 	}
 }
 
-func (s *Server) AddSub(r *Request) error {
+func (s *Qmess) AddSub(r *Request) error {
 	for _, q := range s.queues {
 		if q.name == r.Payload {
 			q.subscribers = append(q.subscribers, r.Sender)
@@ -61,13 +61,13 @@ func (s *Server) AddSub(r *Request) error {
 	return fmt.Errorf("Queue %s not found", r.Payload)
 }
 
-func (s *Server) Run() {
+func (s *Qmess) Run() {
 	ln, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
-	fmt.Println("Server started...")
+	fmt.Println("Qmess started...")
 	defer ln.Close()
 	for {
 		conn, err := ln.Accept()
@@ -79,10 +79,10 @@ func (s *Server) Run() {
 	}
 }
 
-func (s *Server) Publish(r *Request) {
+func (s *Qmess) Publish(r *Request) {
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *Qmess) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	buffer := make([]byte, 1024)
 	for {
@@ -99,7 +99,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 }
 
-func (s *Server) handleRequest(r *Request) {
+func (s *Qmess) handleRequest(r *Request) {
 	switch {
 	case r.Type == RequestConnect:
 		fmt.Printf("USER %s CONNECTED TO SERVER\n", r.Sender)
@@ -119,7 +119,75 @@ func (s *Server) handleRequest(r *Request) {
 	}
 }
 
-func main() {
-	s := NewServer("localhost:8080")
-	s.Run()
+type Client struct {
+	name       string
+	authKey    string
+	serverAddr string
+	session    net.Conn
+}
+
+func NewClient(name string, serverAddr string) *Client {
+	return &Client{
+		name:       name,
+		serverAddr: serverAddr,
+	}
+}
+
+func (c *Client) Send(r *Request) {
+	data, err := json.Marshal(&r)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	conn, err := net.Dial("tcp", c.serverAddr)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	defer conn.Close()
+
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+}
+
+func (c *Client) Connect() {
+	conn, err := net.Dial("tcp", c.serverAddr)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	c.session = conn
+	r := Request{
+		Type:    RequestConnect,
+		Sender:  c.name,
+		Payload: c.authKey,
+	}
+	c.Send(&r)
+}
+
+func (c *Client) Close() {
+	r := Request{
+		Type:    RequestDisconnect,
+		Sender:  c.name,
+		Payload: c.authKey,
+	}
+	c.Send(&r)
+	c.session.Close()
+}
+
+func (c *Client) Subscribe(q string) {
+	r := Request{
+		Type:    RequestSubscribe,
+		Sender:  c.name,
+		Payload: q,
+	}
+	c.Send(&r)
+}
+
+func (c *Client) Receive(r *Request) {
+
 }
