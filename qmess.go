@@ -41,9 +41,9 @@ type Qmess struct {
 	queues      []Queue
 }
 
-func NewServer(listenAddr string) *Qmess {
+func NewServer() *Qmess {
 	return &Qmess{
-		listenAddr:  listenAddr,
+		listenAddr:  "localhost:8428",
 		publishers:  []Publisher{},
 		subscribers: []Subscriber{},
 		queues:      []Queue{},
