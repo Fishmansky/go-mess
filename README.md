@@ -20,7 +20,7 @@ package main
 import "github.com/Fishmansky/qmess"
 
 func main() {
-    q := qmess.NewServer()
+	q := qmess.NewServer()
 	q.Run() // listen and server on localhost:8428
 }
 ```
@@ -28,4 +28,3 @@ func main() {
 Then use Go command to run it:
 ```bash
 $ go run example
-```
