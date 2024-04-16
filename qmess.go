@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
 const (
@@ -123,13 +124,14 @@ type Client struct {
 	name       string
 	authKey    string
 	serverAddr string
+	timeout    time.Duration
 	session    net.Conn
 }
 
-func NewClient(name string, serverAddr string) *Client {
+func NewClient(name string) *Client {
 	return &Client{
 		name:       name,
-		serverAddr: serverAddr,
+		serverAddr: "localhost:8428",
 	}
 }
 
