@@ -81,33 +81,41 @@ func (q *Qmess) Run() {
 			return
 		}
 		connID := rand.Intn(1000)
-		go q.handleConnection(conn, connID)
-	}
-}
-
-func (q *Qmess) handleConnection(conn net.Conn, connID int) {
-	defer conn.Close()
-	buffer := make([]byte, 1024)
-	for {
-		n, err := conn.Read(buffer)
-		if err != nil {
-			if err != io.EOF {
-				log.Println("Error reading from connection:", err)
+		exit := make(chan bool)
+		go func() {
+			for {
+				select {
+				case <-exit:
+					return
+				default:
+					for {
+						buffer := make([]byte, 1024)
+						for {
+							n, err := conn.Read(buffer)
+							if err != nil {
+								if err != io.EOF {
+									log.Println("Error reading from connection:", err)
+								}
+								break
+							}
+							var r Request
+							json.Unmarshal(buffer[:n], &r)
+							q.handleRequest(&r, &conn, connID, exit)
+						}
+					}
+				}
 			}
-			break
-		}
-		var r Request
-		json.Unmarshal(buffer[:n], &r)
-		q.handleRequest(&r, &conn, connID)
+
+		}()
 	}
 }
 
-func (q *Qmess) handleRequest(r *Request, conn *net.Conn, connID int) {
+func (q *Qmess) handleRequest(r *Request, conn *net.Conn, connID int, exit chan bool) {
 	switch {
 	case r.Type == RequestConnect:
 		q.NewConnection(*r, conn, connID)
 	case r.Type == RequestDisconnect:
-		q.Disconnect(*r, connID)
+		q.DisconnectService(*r, conn, connID, exit)
 	case r.Type == RequestPublish:
 		q.QueueRoute(*r, connID)
 	case r.Type == RequestSubscribe:
@@ -135,14 +143,13 @@ func (q *Qmess) NewConnection(r Request, conn *net.Conn, connID int) {
 	q.muConnections.Unlock()
 }
 
-func (q *Qmess) Disconnect(r Request, connID int) {
+func (q *Qmess) DisconnectService(r Request, conn *net.Conn, connID int, exit chan bool) {
 	q.muConnections.Lock()
-	conn := *q.Connections[connID]
-	log.Printf("[-] Connection ID %d closed [-]\n", connID)
-	conn.Close()
 	delete(q.Connections, connID)
-	log.Printf("[-] %s disconnected [-]\n", r.Sender)
+	(*conn).Close()
 	q.muConnections.Unlock()
+	log.Printf("[-] connection with %s closed (connID: %d) [-]\n", r.Sender, connID)
+	exit <- true
 }
 
 func (q *Qmess) queueExists(qName string) bool {
@@ -159,10 +166,12 @@ func (q *Qmess) QueueRoute(r Request, connID int) {
 		q.Queues = append(q.Queues, Queue{Name: r.Queue})
 		log.Printf("New queue %s created\n", r.Queue)
 	}
-	for i, qu := range q.Queues {
-		if qu.Name == r.Queue {
+	for i := range q.Queues {
+		if q.Queues[i].Name == r.Queue {
+			q.Queues[i].muRequests.Lock()
 			q.Queues[i].Requests = append(q.Queues[i].Requests, r)
 			log.Printf("%s (connID: %d) published to queue: %s\n", r.Sender, connID, r.Queue)
+			q.Queues[i].muRequests.Unlock()
 		}
 	}
 }
@@ -172,8 +181,8 @@ func (q *Qmess) Subscribe(r Request, connID int) {
 		q.Queues = append(q.Queues, Queue{Name: r.Queue})
 		log.Printf("New queue %s created\n", r.Queue)
 	}
-	for i, qu := range q.Queues {
-		if qu.Name == r.Queue {
+	for i, _ := range q.Queues {
+		if q.Queues[i].Name == r.Queue {
 			log.Printf("%s subscribed to queue %s\n", r.Sender, r.Queue)
 			for {
 				time.Sleep(time.Millisecond * 200)
@@ -209,7 +218,9 @@ type Client struct {
 	name       string
 	serverAddr string
 	Timeout    time.Duration
-	Session    *net.Conn
+
+	muSession sync.Mutex
+	Session   *net.Conn
 }
 
 func NewClient(name string) *Client {
@@ -227,21 +238,25 @@ func (c *Client) Send(r *Request) {
 		return
 	}
 	s := *c.Session
+	c.muSession.Lock()
 	_, err = s.Write(data)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
+	c.muSession.Unlock()
 
 }
 
 func (c *Client) Connect() {
+	c.muSession.Lock()
 	conn, err := net.Dial("tcp", c.serverAddr)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
 	c.Session = &conn
+	c.muSession.Unlock()
 	r := Request{
 		Type:   RequestConnect,
 		Sender: c.name,
@@ -249,7 +264,7 @@ func (c *Client) Connect() {
 	c.Send(&r)
 }
 
-func (c *Client) RequestResponse() {
+func (c *Client) RequestAccepted() (bool, error) {
 	conn := *c.Session
 	buffer := make([]byte, 1024)
 	n, err := conn.Read(buffer)
@@ -257,13 +272,14 @@ func (c *Client) RequestResponse() {
 		if err != io.EOF {
 			log.Println("Error reading from conection:", err)
 		}
-		return
+		return false, err
 	}
 	var resp Request
 	json.Unmarshal(buffer[:n], &resp)
-	if resp.Type != RequestAccepted {
-		log.Fatal("Connection response other than accepted - exiting now.")
+	if resp.Type == RequestAccepted {
+		return true, nil
 	}
+	return false, fmt.Errorf("Request failed\n")
 }
 
 func (c *Client) Close() {
@@ -272,8 +288,7 @@ func (c *Client) Close() {
 		Sender: c.name,
 	}
 	c.Send(&r)
-	s := *c.Session
-	s.Close()
+	fmt.Println("Connection closed")
 }
 
 func (c *Client) Publish(p string, qName string) {
