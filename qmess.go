@@ -185,7 +185,7 @@ func (q *Qmess) Subscribe(r Request, connID int) {
 		if q.Queues[i].Name == r.Queue {
 			log.Printf("%s subscribed to queue %s\n", r.Sender, r.Queue)
 			for {
-				time.Sleep(time.Millisecond * 200)
+				time.Sleep(time.Millisecond * 10)
 				q.PushFirst(i, connID)
 			}
 		}
@@ -245,6 +245,7 @@ func (c *Client) Send(r *Request) {
 		return
 	}
 	c.muSession.Unlock()
+	time.Sleep(time.Millisecond * 1)
 
 }
 
@@ -308,6 +309,7 @@ func (c *Client) Subscribe(qName string) {
 		Queue:  qName,
 	}
 	c.Send(&r)
+	time.Sleep(time.Microsecond * 10)
 	for {
 		conn := *c.Session
 		buffer := make([]byte, 1024)
